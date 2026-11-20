@@ -5,6 +5,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -12,10 +14,35 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-      - run: unzip -q ilauncher.zip -d proj
-      - run: gradle assembleDebug --no-daemon
+      - name: Unpack newest project zip
+        run: |
+          best=""
+          bt=0
+          for f in *.zip; do
+            unzip -l "$f" | grep -q "Island.kt" || continue
+            t=$(git log -1 --format=%ct -- "$f")
+            t=${t:-0}
+            if [ "$t" -ge "$bt" ]; then bt=$t; best="$f"; fi
+          done
+          echo "Using: $best"
+          [ -n "$best" ] || { echo "No project zip found"; exit 1; }
+          unzip -q "$best" -d proj
+      - name: Build
         working-directory: proj
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --console=plain 2>&1 | tee ../build.log
+      - name: Show errors
+        if: failure()
+        run: |
+          echo "### Build errors" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build.log ]; then
+            grep -E "^e: |error:|What went wrong" -A3 build.log | head -60 | sed "s/^/    /" >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "    Project zip not found or could not be unpacked" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: iLauncher-apk
+          name: Island-apk
           path: proj/app/build/outputs/apk/debug/app-debug.apk
